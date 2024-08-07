@@ -481,4 +481,245 @@ fn update() !void {
             }
         }
     }
+
+    {
+        var i: usize = 0;
+        while (i < state.aliens.items.len) {
+            var a = &state.aliens.items[i];
+
+            for (state.projectiles.items) |*p| {
+                if (!p.remove and (state.now - p.spawn) > 0.15 and rlm.vector2Distance(a.pos) < a.size.collisionSize()) {
+                    p.remove = true;
+                    p.remove = true;
+                }
+            }
+
+            if (!a.remove and rlm.vector2Distance(a.pos, state.ship.pos) < a.size.collisionSize()) {
+                a.remove = true;
+                state.ship.deathTime = state.now;
+            }
+
+            if (!a.remove) {
+                if ((state.now - a.lastDir) > a.size.dirChangeTime()) {
+                    a.lastDir = state.now;
+                    const angle = math.tau * state.rand.float(f32);
+                    a.dir = Vector2.init(math.cos(angle), math.sin(angle));
+                }
+
+                a.pos = rlm.vector2Add(a.pos, rlm.vector2Scale(a.dir, a.size.speed()));
+                a.pos = Vector2.init(
+                    @mod(a.pos.x, SIZE.x),
+                    @mod(a.pos.y, SIZE.y),
+                );
+
+                if ((state.now - a.lastShot) > a.size.shotTime()) {
+                    a.lastShot = state.now;
+                    const dir = rlm.vector2Normalize(rlm.vector2Subtract(state.ship.pos, a.pos));
+                    try state.projectiles.append(.{
+                        .pos = rlm.vector2Add(
+                            a.pos,
+                            rlm.vector2Scale(dir, SCALE, 0.55),
+                        ),
+                        .vel = rlm.vector2Scale(dir, 6.0),
+                        .ttl = 2.0,
+                        .spawn = state.now,
+                    });
+                    rl.playSound(sound.shoot);
+                }
+            }
+
+            if (a.remove) {
+                rl.playSound(sound.asteroid);
+                try splatDots(a.pos, 15);
+                try splatLines(a.pos, 4);
+                _ = state.aliens.swapRemove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    if (state.ship.deathTime == state.now) {
+        rl.playSound(sound.explode);
+        try .splatDots(state.ship.pos, 20);
+        try .splatLines(state.ship.pos, 5);
+    }
+
+    if (state.ship.isDead() and (state.now - state.ship.deathTime) > 3.0) {
+        try resetStage();
+    }
+
+    const bloopIntensity = @min(@as(usize, @intFromFloat(state.now - state.stageStart)) / 15, 3);
+
+    var bloopMod: usize = 60;
+    for (0..bloopIntensity) |_| {
+        bloopMod /= 2;
+    }
+
+    if (state.frame % bloopMod == 0) {
+        state.bloop += 1;
+    }
+
+    if (!state.ship.isDead() and state.bloop != state.lastBloop) {
+        rl.playSound(if (state.bloop % 2 == 1) sound.bloopHi else sound.bloopLo);
+    }
+    state.lastBloop = state.bloop;
+
+    if (state.asteroid.items.len == 0 and state.aliens.items.len == 0) {
+        try resetAsteroids();
+    }
+
+    if ((state.lastScore / 5000) != (state.score / 5000)) {
+        try state.aliens.append(.{
+            .pos = Vector2.init(
+                if (state.rand.boolean()) 0 else SIZE.x - SCALE,
+                state.rand.float(f32) * SIZE.y,
+            ),
+            .dir = Vector2.init(0.0),
+            .size = .SMALL,
+        });
+    }
+
+    state.lastScore = state.score;
+}
+
+fn drawAlien(pos: Vector2, size: AlienSize) void {
+    const scale: f32 = switch (size) {
+        .BIG => 1.0,
+        .SMALL => 0.5,
+    };
+
+    drawLines(pos, SCALE * scale, 0, &.{
+        Vector2.init(-0.5, 0.0),
+        Vector2.init(-0.3, 0.3),
+        Vector2.init(0.3, 0.3),
+        Vector2.init(0.5, 0.0),
+        Vector2.init(0.3, -0.3),
+        Vector2.init(-0.3, -0.3),
+        Vector2.init(-0.3, -0.3),
+        Vector2.init(-0.5, 0.0),
+        Vector2.init(0.5, 0.0),
+    }, false);
+
+    drawLines(pos, SCALE * scale, 0, &.{
+        Vector2.init(-0.2, -0.3),
+        Vector2.init(-0.1, -0.5),
+        Vector2.init(0.1, -0.5),
+        Vector2.init(0.2, -0.3),
+    }, false);
+
+
+    const SHIP_LINES = [_]Vector2{
+        Vector2.init(-0.4, -0.5),
+        Vector2.init(0.0, 0.5),
+        Vector2.init(0.4, -0.5),
+        Vector2.init(0.3, -0.4),
+        Vector2.init(-0.3, -0.4),
+    };
+
+}
+
+fn render() !void {
+    for (0..state.lives) |i| {
+        drawLines(
+            Vector2.init(SCALE + (@as(f32, @floatFromInt(i)) * SCALE), SCALE),
+            SCALE,
+            -math.pi,
+            &SHIP_LINES,
+            true,
+        );
+    }
+
+    try drawNumber(state.score, Vector2.init(SIZE.x - SCALE, SCALE));
+
+    if (!state.ship.isDead()) {
+        drawLines(
+            state.ship.pos,
+            SCALE,
+            state.ship.rot,
+            &SHIP_LINES,
+            true,
+        );
+
+        if (rl.isKeyDown(.key_w) and @mod(@as(i32, @intFromFloat(state.now * 20)), 2) == 0) {
+            drawLines(
+                state.ship.pos,
+                SCALE,
+                state.ship.rot,
+                &.{
+                    Vector2.init(-0.3, -0.4),
+                    Vector2.init(0.0, -1.0),
+                    Vector2.init(0.3, -0.4),
+                },
+                true,
+            );
+        }
+    }
+
+    for (state.asteroids.items) |a| {
+        try drawAsteroid(a.pos, a.size, a.seed);
+    }
+
+    for (state.aliens.items) |a| {
+        drawAlien(a.pos, a.size);
+    }
+
+    for (state.particles.items) |p| {
+        switch (p.values) {
+            .LINE => |line| {
+                drawLines(
+                    p.pos,
+                    line.length,
+                    line.rot,
+                    &.{
+                        Vector2.init(-0.5, 0),
+                        Vector2.init(0.5, 0),
+                    },
+                    true,
+                );
+            },
+            .DOT => |dot| {
+                rl.drawCircleV(p.pos, dot.radius, rl.Color.white);
+            },
+        }
+    }
+
+    for (state.projectiles.items) |p| {
+        rl.drawCircleV(p.pos, @max(SCALE * 0.05, 1), rl.Color.white);
+    }
+}
+
+
+    fn resetAsteroid() !void {
+        try state.asteroid.resize(0);
+
+        for (0..(30 + state.score / 1500)) |_| {
+            const angle = math.tau * state.rand.float(f32);
+            const size = state.rand.enumValue(AsteridSize);
+            try state.asteroid_queue.append(.{
+                .pos = Vector2.init(
+                    state.rand.float(f32) * SIZE.x,
+                    state.rand.float(f32) * SIZE.y,
+                ),
+                .vel = rlm.vector2Scale(
+                    Vector2.init(math.cos(angle), math.sin(angle)),
+                    size.velocityScale() * 3.0 * state.rand.float(f32),
+                ),
+                .size = size,
+                .seed = state.rand.int(u64),
+            });
+        }
+
+        state.stageStart = state.now;
+    }
+ 
+    fn resetGame() !void {
+        state.lives = 3;
+        state.score = 0;
+
+        try resetStage();
+        try resetAsteroids();
+    }
+
+    //
 }
